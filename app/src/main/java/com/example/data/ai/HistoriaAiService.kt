@@ -4,6 +4,7 @@ import com.example.data.model.HistoryProduction
 import com.example.data.model.HistoryScene
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
@@ -54,7 +55,7 @@ class HistoriaAiService {
     )
 
     private val videoModel by lazy {
-        Firebase.ai.generativeModel(
+        Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
             modelName = "gemini-3.8-flash",
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
@@ -64,7 +65,7 @@ class HistoriaAiService {
     }
 
     private val svgModel by lazy {
-        Firebase.ai.generativeModel(
+        Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
             modelName = "gemini-3.8-flash",
             generationConfig = generationConfig {
                 responseMimeType = "application/json"

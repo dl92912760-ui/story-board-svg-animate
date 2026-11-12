@@ -169,9 +169,7 @@ class HistoriaViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Gemini generation failed", e)
-                _generationState.value = GenerationUiState.Error(
-                    e.localizedMessage ?: "Failed to generate with Gemini."
-                )
+                _generationState.value = GenerationUiState.Error(formatAiError(e, "Failed to generate with Gemini."))
             }
         }
     }
@@ -202,10 +200,25 @@ class HistoriaViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Retheme failed", e)
-                _actionMessage.value = e.localizedMessage ?: "Failed to adapt SVG theme."
+                _actionMessage.value = formatAiError(e, "Failed to adapt SVG theme.")
             } finally {
                 _rethemeInProgress.value = false
             }
+        }
+    }
+
+    private fun formatAiError(error: Exception, fallback: String): String {
+        val primary = error.localizedMessage?.trim().orEmpty()
+        val rootCause = generateSequence<Throwable>(error) { it.cause }
+            .lastOrNull()
+            ?.localizedMessage
+            ?.trim()
+            .orEmpty()
+        return when {
+            primary.isNotBlank() && rootCause.isNotBlank() && rootCause != primary -> "$primary ($rootCause)"
+            primary.isNotBlank() -> primary
+            rootCause.isNotBlank() -> rootCause
+            else -> fallback
         }
     }
 
