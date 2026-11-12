@@ -3,6 +3,8 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.ThemePreferences
+import com.example.data.ai.ApiKeyCheckResult
 import com.example.data.ai.HistoriaAiService
 import com.example.data.model.HistoryProduction
 import com.example.data.repository.HistoriaRepository
@@ -31,6 +33,13 @@ sealed interface GenerationUiState {
     data class Error(val message: String) : GenerationUiState
 }
 
+sealed interface ApiKeyUiState {
+    data object Idle : ApiKeyUiState
+    data object Checking : ApiKeyUiState
+    data class Valid(val modelName: String, val message: String) : ApiKeyUiState
+    data class Invalid(val message: String) : ApiKeyUiState
+}
+
 data class StudioFormState(
     val prompt: String = "",
     val generationType: String = "video", // "video" | "svg"
@@ -43,6 +52,7 @@ data class StudioFormState(
 class HistoriaViewModel(
     private val repository: HistoriaRepository,
     private val aiService: HistoriaAiService,
+    private val themePreferences: ThemePreferences,
     private val currentUserId: String
 ) : ViewModel() {
 
@@ -62,6 +72,23 @@ class HistoriaViewModel(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = ArchiveUiState.Loading
         )
+
+    val customApiKey: StateFlow<String> = themePreferences.customApiKey
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ""
+        )
+
+    val customApiModel: StateFlow<String> = themePreferences.customApiModel
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ""
+        )
+
+    private val _apiKeyValidationState = MutableStateFlow<ApiKeyUiState>(ApiKeyUiState.Idle)
+    val apiKeyValidationState: StateFlow<ApiKeyUiState> = _apiKeyValidationState.asStateFlow()
 
     private val _generationState = MutableStateFlow<GenerationUiState>(GenerationUiState.Idle)
     val generationState: StateFlow<GenerationUiState> = _generationState.asStateFlow()
@@ -116,6 +143,46 @@ class HistoriaViewModel(
         }
     }
 
+    fun clearApiValidationStatus() {
+        if (_apiKeyValidationState.value !is ApiKeyUiState.Checking) {
+            _apiKeyValidationState.value = ApiKeyUiState.Idle
+        }
+    }
+
+    fun applyAndValidateApiKey(rawKey: String) {
+        val trimmed = rawKey.trim()
+        if (trimmed.isBlank()) {
+            _apiKeyValidationState.value = ApiKeyUiState.Invalid("Please enter an API key before clicking OK API.")
+            return
+        }
+        viewModelScope.launch {
+            _apiKeyValidationState.value = ApiKeyUiState.Checking
+            when (val result = aiService.validateGeminiApiKey(trimmed)) {
+                is ApiKeyCheckResult.Valid -> {
+                    themePreferences.setCustomApiConfig(trimmed, result.modelName)
+                    _apiKeyValidationState.value = ApiKeyUiState.Valid(
+                        modelName = result.modelName,
+                        message = result.message
+                    )
+                    clearGenerationError()
+                    _actionMessage.value = "Gemini API updated (${result.modelName})."
+                }
+                is ApiKeyCheckResult.Invalid -> {
+                    _apiKeyValidationState.value = ApiKeyUiState.Invalid(result.message)
+                }
+            }
+        }
+    }
+
+    fun resetToDefaultFirebaseAi() {
+        viewModelScope.launch {
+            themePreferences.clearCustomApiConfig()
+            _apiKeyValidationState.value = ApiKeyUiState.Idle
+            clearGenerationError()
+            _actionMessage.value = "Switched back to default Firebase AI Logic."
+        }
+    }
+
     fun generateProduction() {
         val form = _studioForm.value
         val trimmedPrompt = form.prompt.trim()
@@ -123,6 +190,9 @@ class HistoriaViewModel(
             _generationState.value = GenerationUiState.Error("Enter a historical topic or scene prompt first.")
             return
         }
+
+        val activeKey = customApiKey.value
+        val activeModel = customApiModel.value
 
         viewModelScope.launch {
             val status = if (form.generationType == "video") {
@@ -138,14 +208,18 @@ class HistoriaViewModel(
                         visualStyle = form.visualStyle,
                         backgroundTheme = form.backgroundTheme,
                         aspectRatio = form.aspectRatio,
-                        sceneCount = form.sceneCount
+                        sceneCount = form.sceneCount,
+                        customApiKey = activeKey,
+                        customModelName = activeModel
                     )
                 } else {
                     aiService.generateHistoriaSvg(
                         prompt = trimmedPrompt,
                         visualStyle = form.visualStyle,
                         backgroundTheme = form.backgroundTheme,
-                        aspectRatio = form.aspectRatio
+                        aspectRatio = form.aspectRatio,
+                        customApiKey = activeKey,
+                        customModelName = activeModel
                     )
                 }
 
@@ -176,10 +250,18 @@ class HistoriaViewModel(
 
     fun rethemeProduction(production: HistoryProduction, targetTheme: String) {
         if (production.id.isBlank() || _rethemeInProgress.value) return
+        val activeKey = customApiKey.value
+        val activeModel = customApiModel.value
+
         viewModelScope.launch {
             _rethemeInProgress.value = true
             try {
-                val updatedScenes = aiService.rethemeProduction(production, targetTheme)
+                val updatedScenes = aiService.rethemeProduction(
+                    production = production,
+                    targetBackgroundTheme = targetTheme,
+                    customApiKey = activeKey,
+                    customModelName = activeModel
+                )
                 val totalDuration = updatedScenes.sumOf { it.durationSeconds }.coerceAtLeast(1L)
                 val result = repository.updateScenesTheme(
                     userId = currentUserId,

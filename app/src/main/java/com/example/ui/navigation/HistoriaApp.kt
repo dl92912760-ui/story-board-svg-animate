@@ -53,6 +53,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.R
 import com.example.core.AppThemeMode
+import com.example.core.ThemePreferences
 import com.example.data.ai.HistoriaAiService
 import com.example.data.repository.HistoriaRepository
 import com.example.ui.auth.SignInScreen
@@ -154,6 +155,7 @@ private fun HistoriaAuthenticatedShell(
                 HistoriaViewModel(
                     repository = HistoriaRepository(db),
                     aiService = HistoriaAiService(),
+                    themePreferences = ThemePreferences(app),
                     currentUserId = uid
                 )
             }
@@ -166,6 +168,9 @@ private fun HistoriaAuthenticatedShell(
     val studioForm by viewModel.studioForm.collectAsStateWithLifecycle()
     val lastCreatedId by viewModel.lastCreatedId.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
+    val activeApiKey by viewModel.customApiKey.collectAsStateWithLifecycle()
+    val activeApiModel by viewModel.customApiModel.collectAsStateWithLifecycle()
+    val apiValidationState by viewModel.apiKeyValidationState.collectAsStateWithLifecycle()
 
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -298,6 +303,12 @@ private fun HistoriaAuthenticatedShell(
                                     form = studioForm,
                                     generationState = generationState,
                                     archiveState = archiveState,
+                                    activeApiKey = activeApiKey,
+                                    activeApiModel = activeApiModel,
+                                    apiValidationState = apiValidationState,
+                                    onApplyApiKey = viewModel::applyAndValidateApiKey,
+                                    onResetDefaultApi = viewModel::resetToDefaultFirebaseAi,
+                                    onClearApiValidation = viewModel::clearApiValidationStatus,
                                     onPromptChange = viewModel::updatePrompt,
                                     onTypeChange = viewModel::updateGenerationType,
                                     onCanvasThemeChange = viewModel::updateBackgroundTheme,
@@ -327,6 +338,12 @@ private fun HistoriaAuthenticatedShell(
                                 ThemeSettingsScreen(
                                     themeMode = themeMode,
                                     currentUser = currentUser,
+                                    activeApiKey = activeApiKey,
+                                    activeApiModel = activeApiModel,
+                                    apiValidationState = apiValidationState,
+                                    onApplyApiKey = viewModel::applyAndValidateApiKey,
+                                    onResetDefaultApi = viewModel::resetToDefaultFirebaseAi,
+                                    onClearApiValidation = viewModel::clearApiValidationStatus,
                                     onThemeModeChange = onThemeModeChange,
                                     onSignOut = {
                                         signOutUser(

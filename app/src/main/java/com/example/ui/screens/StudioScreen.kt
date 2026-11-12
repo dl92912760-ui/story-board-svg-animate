@@ -29,7 +29,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HistoryEdu
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
@@ -48,6 +51,11 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +70,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.HistoryProduction
+import com.example.ui.components.GeminiApiKeyCard
+import com.example.ui.viewmodel.ApiKeyUiState
 import com.example.ui.viewmodel.ArchiveUiState
 import com.example.ui.viewmodel.GenerationUiState
 import com.example.ui.viewmodel.StudioFormState
@@ -90,6 +100,12 @@ fun StudioScreen(
     form: StudioFormState,
     generationState: GenerationUiState,
     archiveState: ArchiveUiState,
+    activeApiKey: String,
+    activeApiModel: String,
+    apiValidationState: ApiKeyUiState,
+    onApplyApiKey: (String) -> Unit,
+    onResetDefaultApi: () -> Unit,
+    onClearApiValidation: () -> Unit,
     onPromptChange: (String) -> Unit,
     onTypeChange: (String) -> Unit,
     onCanvasThemeChange: (String) -> Unit,
@@ -102,6 +118,13 @@ fun StudioScreen(
     modifier: Modifier = Modifier
 ) {
     val isGenerating = generationState is GenerationUiState.Generating
+    var showApiPanel by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(generationState) {
+        if (generationState is GenerationUiState.Error) {
+            showApiPanel = true
+        }
+    }
 
     Column(
         modifier = modifier
@@ -187,6 +210,63 @@ fun StudioScreen(
                     modifier = Modifier
                         .weight(1f)
                         .testTag("mode_svg_button")
+                )
+            }
+
+            // Quick Gemini API Switcher & Validator Bar
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { showApiPanel = !showApiPanel }
+                    .testTag("studio_api_toggle_button"),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Key,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (activeApiKey.isNotBlank()) {
+                                "Gemini API: Custom (${activeApiModel.ifBlank { "gemini-2.5-flash" }})"
+                            } else {
+                                "Gemini API: Firebase AI Default (Tap to change)"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Icon(
+                        imageVector = if (showApiPanel) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (showApiPanel) "Collapse API settings" else "Expand API settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = showApiPanel) {
+                GeminiApiKeyCard(
+                    activeApiKey = activeApiKey,
+                    activeModelName = activeApiModel,
+                    validationState = apiValidationState,
+                    onApplyApiKey = onApplyApiKey,
+                    onResetDefaultApi = onResetDefaultApi,
+                    onClearValidation = onClearApiValidation
                 )
             }
 

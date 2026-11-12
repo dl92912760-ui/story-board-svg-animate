@@ -45,12 +45,20 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.core.AppThemeMode
+import com.example.ui.components.GeminiApiKeyCard
+import com.example.ui.viewmodel.ApiKeyUiState
 import com.google.firebase.auth.FirebaseUser
 
 @Composable
 fun ThemeSettingsScreen(
     themeMode: AppThemeMode,
     currentUser: FirebaseUser?,
+    activeApiKey: String,
+    activeApiModel: String,
+    apiValidationState: ApiKeyUiState,
+    onApplyApiKey: (String) -> Unit,
+    onResetDefaultApi: () -> Unit,
+    onClearApiValidation: () -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier
@@ -181,7 +189,11 @@ fun ThemeSettingsScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "Firebase Firestore Sync & Gemini 3.8 Flash Active",
+                            text = if (activeApiKey.isNotBlank()) {
+                                "Firestore Sync Active • Custom Gemini (${activeApiModel.ifBlank { "gemini-2.5-flash" }})"
+                            } else {
+                                "Firebase Firestore Sync & Gemini 3.8 Flash Active"
+                            },
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.secondary
                         )
@@ -208,6 +220,15 @@ fun ThemeSettingsScreen(
                     }
                 }
             }
+
+            GeminiApiKeyCard(
+                activeApiKey = activeApiKey,
+                activeModelName = activeApiModel,
+                validationState = apiValidationState,
+                onApplyApiKey = onApplyApiKey,
+                onResetDefaultApi = onResetDefaultApi,
+                onClearValidation = onClearApiValidation
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }

@@ -8,9 +8,23 @@ import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.generationConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+
+sealed interface ApiKeyCheckResult {
+    data class Valid(val modelName: String, val message: String) : ApiKeyCheckResult
+    data class Invalid(val message: String) : ApiKeyCheckResult
+}
 
 class HistoriaAiService {
 
@@ -56,7 +70,7 @@ class HistoriaAiService {
 
     private val videoModel by lazy {
         Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
-            modelName = "gemini-3.8-flash",
+            modelName = DEFAULT_FIREBASE_MODEL,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = productionSchema
@@ -66,12 +80,95 @@ class HistoriaAiService {
 
     private val svgModel by lazy {
         Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
-            modelName = "gemini-3.8-flash",
+            modelName = DEFAULT_FIREBASE_MODEL,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = singleSvgSchema
             }
         )
+    }
+
+    suspend fun validateGeminiApiKey(rawKey: String): ApiKeyCheckResult {
+        val trimmed = rawKey.trim()
+        if (trimmed.isBlank()) {
+            return ApiKeyCheckResult.Invalid("Please enter a Gemini API key.")
+        }
+        return try {
+            withTimeout(15_000L) {
+                withContext(Dispatchers.IO) {
+                    val encodedKey = URLEncoder.encode(trimmed, "UTF-8")
+                    val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$encodedKey")
+                    val conn = (url.openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 10_000
+                        readTimeout = 12_000
+                    }
+                    try {
+                        val code = conn.responseCode
+                        val body = readStream(if (code in 200..299) conn.inputStream else conn.errorStream)
+                        if (code in 200..299) {
+                            val selected = pickBestGeminiModel(body)
+                            if (selected != null) {
+                                ApiKeyCheckResult.Valid(
+                                    modelName = selected,
+                                    message = "Correct API key! Switched to Gemini ($selected)."
+                                )
+                            } else {
+                                ApiKeyCheckResult.Invalid("API key is valid for Google Cloud, but no Gemini content-generation models are enabled.")
+                            }
+                        } else {
+                            val errMsg = extractGoogleErrorMessage(body) ?: "HTTP $code"
+                            ApiKeyCheckResult.Invalid("Incorrect API key: $errMsg")
+                        }
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            ApiKeyCheckResult.Invalid("API check timed out. Check your internet connection and try again.")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ApiKeyCheckResult.Invalid("Incorrect API or network error: ${e.localizedMessage ?: "Validation failed"}")
+        }
+    }
+
+    private fun pickBestGeminiModel(modelsJson: String): String? {
+        val root = runCatching { JSONObject(modelsJson) }.getOrNull() ?: return null
+        val models = root.optJSONArray("models") ?: return null
+        val supported = mutableListOf<String>()
+        for (i in 0 until models.length()) {
+            val item = models.optJSONObject(i) ?: continue
+            val methods = item.optJSONArray("supportedGenerationMethods") ?: continue
+            var canGenerate = false
+            for (j in 0 until methods.length()) {
+                if (methods.optString(j) == "generateContent") {
+                    canGenerate = true
+                    break
+                }
+            }
+            if (canGenerate) {
+                val fullName = item.optString("name", "")
+                val shortName = fullName.removePrefix("models/")
+                if (shortName.contains("gemini", ignoreCase = true)) {
+                    supported.add(shortName)
+                }
+            }
+        }
+        val preferredOrder = listOf(
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash"
+        )
+        for (preferred in preferredOrder) {
+            if (supported.contains(preferred)) return preferred
+        }
+        return supported.firstOrNull { it.contains("flash", ignoreCase = true) }
+            ?: supported.firstOrNull()
     }
 
     private fun viewBoxForAspectRatio(aspectRatio: String): Pair<Int, Int> = when (aspectRatio) {
@@ -85,7 +182,9 @@ class HistoriaAiService {
         visualStyle: String,
         backgroundTheme: String,
         aspectRatio: String,
-        sceneCount: Int = 4
+        sceneCount: Int = 4,
+        customApiKey: String = "",
+        customModelName: String = ""
     ): HistoryProduction {
         val (width, height) = viewBoxForAspectRatio(aspectRatio)
         val clampedCount = sceneCount.coerceIn(3, 6)
@@ -108,17 +207,13 @@ class HistoriaAiService {
             5. Never reference external images, scripts, or fonts. Keep all SVG self-contained and valid XML.
         """.trimIndent()
 
-        val response = try {
-            withTimeout(60_000L) {
-                videoModel.generateContent(fullPrompt)
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw e
-        } catch (e: CancellationException) {
-            throw e
-        }
+        val jsonText = generateStructuredJson(
+            prompt = fullPrompt,
+            isSingleSvg = false,
+            customApiKey = customApiKey,
+            customModelName = customModelName
+        )
 
-        val jsonText = response.text ?: throw IllegalStateException("Gemini returned an empty response.")
         val root = JSONObject(jsonText)
         val title = root.optString("title", "Historical Chronicle").ifBlank { "Historical Chronicle" }
         val era = root.optString("era", "World History")
@@ -158,7 +253,9 @@ class HistoriaAiService {
         prompt: String,
         visualStyle: String,
         backgroundTheme: String,
-        aspectRatio: String
+        aspectRatio: String,
+        customApiKey: String = "",
+        customModelName: String = ""
     ): HistoryProduction {
         val (width, height) = viewBoxForAspectRatio(aspectRatio)
         val paletteDirective = if (backgroundTheme == "light") {
@@ -179,17 +276,13 @@ class HistoriaAiService {
             4. Self-contained XML only; no external URLs.
         """.trimIndent()
 
-        val response = try {
-            withTimeout(60_000L) {
-                svgModel.generateContent(fullPrompt)
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw e
-        } catch (e: CancellationException) {
-            throw e
-        }
+        val jsonText = generateStructuredJson(
+            prompt = fullPrompt,
+            isSingleSvg = true,
+            customApiKey = customApiKey,
+            customModelName = customModelName
+        )
 
-        val jsonText = response.text ?: throw IllegalStateException("Gemini returned an empty response.")
         val root = JSONObject(jsonText)
         val title = root.optString("title", "Historical Vector").ifBlank { "Historical Vector" }
         val era = root.optString("era", "Archival Illustration")
@@ -223,7 +316,9 @@ class HistoriaAiService {
 
     suspend fun rethemeProduction(
         production: HistoryProduction,
-        targetBackgroundTheme: String
+        targetBackgroundTheme: String,
+        customApiKey: String = "",
+        customModelName: String = ""
     ): List<HistoryScene> {
         val (width, height) = viewBoxForAspectRatio(production.aspectRatio)
         val targetDirective = if (targetBackgroundTheme == "light") {
@@ -245,17 +340,13 @@ class HistoriaAiService {
             $existingSummary
         """.trimIndent()
 
-        val response = try {
-            withTimeout(60_000L) {
-                videoModel.generateContent(fullPrompt)
-            }
-        } catch (e: TimeoutCancellationException) {
-            throw e
-        } catch (e: CancellationException) {
-            throw e
-        }
+        val jsonText = generateStructuredJson(
+            prompt = fullPrompt,
+            isSingleSvg = false,
+            customApiKey = customApiKey,
+            customModelName = customModelName
+        )
 
-        val jsonText = response.text ?: throw IllegalStateException("Gemini returned an empty response.")
         val root = JSONObject(jsonText)
         val scenesArray = root.getJSONArray("scenes")
 
@@ -275,6 +366,135 @@ class HistoriaAiService {
         }
     }
 
+    private suspend fun generateStructuredJson(
+        prompt: String,
+        isSingleSvg: Boolean,
+        customApiKey: String,
+        customModelName: String
+    ): String {
+        val key = customApiKey.trim()
+        if (key.isBlank()) {
+            val response = try {
+                withTimeout(60_000L) {
+                    if (isSingleSvg) {
+                        svgModel.generateContent(prompt)
+                    } else {
+                        videoModel.generateContent(prompt)
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
+            }
+            return response.text ?: throw IllegalStateException("Gemini returned an empty response.")
+        }
+
+        val model = customModelName.trim().ifBlank { "gemini-2.5-flash" }
+        return withTimeout(60_000L) {
+            withContext(Dispatchers.IO) {
+                val encodedKey = URLEncoder.encode(key, "UTF-8")
+                val encodedModel = URLEncoder.encode(model, "UTF-8")
+                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$encodedModel:generateContent?key=$encodedKey")
+                val payload = JSONObject().apply {
+                    put("contents", JSONArray().put(
+                        JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                    ))
+                    put("generationConfig", JSONObject().apply {
+                        put("responseMimeType", "application/json")
+                        put("responseSchema", if (isSingleSvg) buildSingleSvgRestSchema() else buildProductionRestSchema())
+                    })
+                }
+
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 15_000
+                    readTimeout = 55_000
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                }
+                try {
+                    OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                        writer.write(payload.toString())
+                    }
+                    val code = conn.responseCode
+                    val body = readStream(if (code in 200..299) conn.inputStream else conn.errorStream)
+                    if (code !in 200..299) {
+                        val errMsg = extractGoogleErrorMessage(body) ?: "HTTP $code"
+                        throw IllegalStateException("Gemini API Error ($code): $errMsg")
+                    }
+                    val root = JSONObject(body)
+                    val candidates = root.optJSONArray("candidates")
+                    val text = candidates
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("content")
+                        ?.optJSONArray("parts")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                        .orEmpty()
+                    if (text.isBlank()) {
+                        throw IllegalStateException("Gemini returned an empty response.")
+                    }
+                    text
+                } finally {
+                    conn.disconnect()
+                }
+            }
+        }
+    }
+
+    private fun buildProductionRestSchema(): JSONObject = JSONObject().apply {
+        put("type", "OBJECT")
+        put("properties", JSONObject().apply {
+            put("title", JSONObject().put("type", "STRING"))
+            put("era", JSONObject().put("type", "STRING"))
+            put("summary", JSONObject().put("type", "STRING"))
+            put("scenes", JSONObject().apply {
+                put("type", "ARRAY")
+                put("items", JSONObject().apply {
+                    put("type", "OBJECT")
+                    put("properties", JSONObject().apply {
+                        put("sceneNumber", JSONObject().put("type", "INTEGER"))
+                        put("title", JSONObject().put("type", "STRING"))
+                        put("narration", JSONObject().put("type", "STRING"))
+                        put("durationSeconds", JSONObject().put("type", "INTEGER"))
+                        put("cameraMotion", JSONObject().apply {
+                            put("type", "STRING")
+                            put("enum", JSONArray(listOf("zoom_in", "zoom_out", "pan_left", "pan_right", "static")))
+                        })
+                        put("svgCode", JSONObject().put("type", "STRING"))
+                    })
+                    put("required", JSONArray(listOf("sceneNumber", "title", "narration", "durationSeconds", "cameraMotion", "svgCode")))
+                })
+            })
+        })
+        put("required", JSONArray(listOf("title", "era", "summary", "scenes")))
+    }
+
+    private fun buildSingleSvgRestSchema(): JSONObject = JSONObject().apply {
+        put("type", "OBJECT")
+        put("properties", JSONObject().apply {
+            put("title", JSONObject().put("type", "STRING"))
+            put("era", JSONObject().put("type", "STRING"))
+            put("summary", JSONObject().put("type", "STRING"))
+            put("narration", JSONObject().put("type", "STRING"))
+            put("svgCode", JSONObject().put("type", "STRING"))
+        })
+        put("required", JSONArray(listOf("title", "era", "summary", "narration", "svgCode")))
+    }
+
+    private fun readStream(stream: java.io.InputStream?): String {
+        if (stream == null) return ""
+        return BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+    }
+
+    private fun extractGoogleErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+        return runCatching {
+            JSONObject(body).optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
     private fun sanitizeSvg(raw: String, width: Int, height: Int, theme: String): String {
         val trimmed = raw.trim()
         if (trimmed.contains("<svg") && trimmed.contains("</svg>")) {
@@ -290,5 +510,9 @@ class HistoriaAiService {
               </circle>
             </svg>
         """.trimIndent()
+    }
+
+    private companion object {
+        const val DEFAULT_FIREBASE_MODEL = "gemini-3.8-flash"
     }
 }
