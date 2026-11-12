@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "HistoryProduction": {
+      "title": "HistoryProduction",
+      "description": "A generated historical video storyboard or standalone SVG production created with Gemini and persisted per user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase user UID who owns this production."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the historical video or SVG artwork."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Original user prompt used to generate the historical scenes."
+        },
+        "era": {
+          "type": "string",
+          "description": "Historical era and date context."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Concise historical synopsis."
+        },
+        "generationType": {
+          "type": "string",
+          "enum": ["video", "svg"],
+          "description": "Whether this production is a multi-scene animated video storyboard or a single SVG artwork."
+        },
+        "backgroundTheme": {
+          "type": "string",
+          "enum": ["light", "dark"],
+          "description": "Canvas background theme the SVG scenes were designed for."
+        },
+        "visualStyle": {
+          "type": "string",
+          "description": "Artistic vector style label."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "enum": ["16:9", "9:16", "1:1"],
+          "description": "Viewport aspect ratio of the generated video/SVG canvas."
+        },
+        "totalDurationSeconds": {
+          "type": "integer",
+          "description": "Total duration of all scenes in seconds."
+        },
+        "scenes": {
+          "type": "array",
+          "description": "Ordered list of 1 to 8 animated SVG scenes."
+        },
+        "favorite": {
+          "type": "boolean",
+          "description": "Whether the user bookmarked this production."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "title",
+        "prompt",
+        "era",
+        "summary",
+        "generationType",
+        "backgroundTheme",
+        "visualStyle",
+        "aspectRatio",
+        "totalDurationSeconds",
+        "scenes",
+        "favorite",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/histories/{historyId}": {
+      "schema": {
+        "$ref": "#/entities/HistoryProduction"
+      },
+      "description": "User-owned collection of generated historical video storyboards and SVG scenes."
+    }
+  }
+}

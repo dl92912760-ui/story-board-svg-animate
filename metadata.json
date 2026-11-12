@@ -1,0 +1,6 @@
+{
+  "name": "Historia",
+  "description": "AI-powered historical animated video storyboard and SVG scene generator with Firebase sync, Gemini AI, and adaptive light and dark themes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

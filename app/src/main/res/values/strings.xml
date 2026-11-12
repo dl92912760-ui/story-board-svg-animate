@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Historia</string>
+    <string name="tagline">AI Video Storyboard &amp; Animated SVG Studio</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+    <string name="nav_studio">Studio</string>
+    <string name="nav_archive">Archive</string>
+    <string name="nav_settings">Theme</string>
+    <string name="generate_cta">Generate with Gemini</string>
+    <string name="generating_status">Composing historical scenes &amp; animated SVGs…</string>
+    <string name="retheming_status">Adapting vector palette with Gemini…</string>
+    <string name="empty_archive_title">Your Historical Archive is Empty</string>
+    <string name="empty_archive_subtitle">Create your first AI-animated historical video storyboard or SVG illustration in the Studio tab.</string>
+</resources>
